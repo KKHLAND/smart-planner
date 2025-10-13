@@ -64,7 +64,7 @@
            { id: '3', name: '수학', color: 'bg-purple-200 text-purple-800' },
            { id: '4', name: '사회', color: 'bg-yellow-200 text-yellow-800' },
            { id: '5', name: '과학', color: 'bg-green-200 text-green-800' },
-           { id: '6', name: '기타', color: 'bg-gray-200 text-gray-800' },         
+           { id: '6', name: '기타', color: 'bg-gray-200 text-gray-800' },
            ];
         const DAYS_OF_WEEK = ['일', '월', '화', '수', '목', '금', '토'];
         // END: constants.ts
@@ -98,8 +98,19 @@
                     const item = window.localStorage.getItem('plannerData_V2');
                     if (item) {
                         const parsedData = JSON.parse(item);
-                        if (!parsedData.motivationalQuote) {
-                            parsedData.motivationalQuote = '오늘의 작은 노력이 내일의 큰 성취를 만든다.';
+                        if (!parsedData.events) {
+                            parsedData.events = [];
+                        }
+                        // --- MODIFIED: Weekly motivational quotes ---
+                        if (!parsedData.motivationalQuotes) {
+                            parsedData.motivationalQuotes = {};
+                            // Migration from old format
+                            if (parsedData.motivationalQuote) {
+                                const today = new Date();
+                                const weekStartKey = format(startOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd');
+                                parsedData.motivationalQuotes[weekStartKey] = parsedData.motivationalQuote;
+                                delete parsedData.motivationalQuote;
+                            }
                         }
                         if (parsedData.weeklyGoals && parsedData.weeklyGoals.length > 0) {
                             if (typeof parsedData.weeklyGoals[0] === 'string') {
@@ -123,13 +134,14 @@
                 return {
                     subjects: INITIAL_SUBJECTS,
                     tasks: [],
+                    events: [],
                     dDay: { targetDate: getInitialDate(), title: '수능' },
                     weeklyGoals: [
                         { id: crypto.randomUUID(), text: '핸드폰 안 하기', completed: {} },
                         { id: crypto.randomUUID(), text: '영양제 챙겨 먹기', completed: {} },
                         { id: crypto.randomUUID(), text: '30분 달리기', completed: {} },
                     ],
-                    motivationalQuote: '오늘의 작은 노력이 내일의 큰 성취를 만든다.',
+                    motivationalQuotes: {}, // MODIFIED
                 };
             });
 
@@ -167,6 +179,31 @@
                     tasks: prevData.tasks.filter(task => task.id !== taskId),
                 }));
             }, []);
+            
+            const addEvent = useCallback((event) => {
+                const newEvent = {
+                    ...event,
+                    id: crypto.randomUUID(),
+                    completed: false,
+                };
+                setData(prevData => ({ ...prevData, events: [...prevData.events, newEvent]}));
+            }, []);
+
+            const toggleEventCompletion = useCallback((eventId) => {
+                setData(prevData => ({
+                    ...prevData,
+                    events: prevData.events.map(event =>
+                        event.id === eventId ? { ...event, completed: !event.completed } : event
+                    ),
+                }));
+            }, []);
+
+            const deleteEvent = useCallback((eventId) => {
+                setData(prevData => ({
+                    ...prevData,
+                    events: prevData.events.filter(event => event.id !== eventId),
+                }));
+            }, []);
 
             const addSubject = useCallback((subject) => {
                 const newSubject = { ...subject, id: crypto.randomUUID() };
@@ -202,8 +239,12 @@
                 }));
             }, []);
 
-            const updateMotivationalQuote = useCallback((quote) => {
-                setData(prevData => ({ ...prevData, motivationalQuote: quote }));
+            // --- MODIFIED: Update quote for a specific week ---
+            const updateWeeklyMotivationalQuote = useCallback((weekKey, quote) => {
+                setData(prevData => {
+                    const newQuotes = { ...prevData.motivationalQuotes, [weekKey]: quote };
+                    return { ...prevData, motivationalQuotes: newQuotes };
+                });
             }, []);
 
             const getSubjectById = useCallback((id) => {
@@ -213,6 +254,10 @@
             const getTasksForDate = useCallback((date) => {
                 return data.tasks.filter(task => task.date === date).sort((a,b) => a.id.localeCompare(b.id));
             }, [data.tasks]);
+            
+            const getEventsForDate = useCallback((date) => {
+                return data.events.filter(event => event.date === date).sort((a,b) => a.id.localeCompare(b.id));
+            }, [data.events]);
 
             return {
                 ...data,
@@ -221,12 +266,16 @@
                 addTask,
                 updateTask,
                 deleteTask,
+                addEvent,
+                toggleEventCompletion,
+                deleteEvent,
+                getEventsForDate,
                 addSubject,
                 deleteSubject,
                 updateDDay,
                 updateWeeklyGoals,
                 toggleWeeklyGoal,
-                updateMotivationalQuote,
+                updateWeeklyMotivationalQuote, // MODIFIED
                 getSubjectById,
                 getTasksForDate,
             };
@@ -328,14 +377,36 @@
         };
         // END: components/TaskItem.tsx
 
+        // START: components/EventItem.tsx
+        const EventItem = ({ event }) => {
+            const { toggleEventCompletion, deleteEvent } = useContext(PlannerContext);
+            return React.createElement("div", { className: "flex items-center justify-between bg-white p-3 rounded-lg shadow-sm" },
+                React.createElement("div", { className: "flex items-center gap-3" },
+                    React.createElement("input", {
+                        type: "checkbox",
+                        checked: event.completed,
+                        onChange: () => toggleEventCompletion(event.id),
+                        className: "h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                    }),
+                    React.createElement("span", { className: `text-sm ${event.completed ? 'text-slate-500' : 'text-slate-800'}` }, event.text)
+                ),
+                React.createElement("button", { onClick: () => deleteEvent(event.id), className: "p-2 rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600", title: "삭제" }, React.createElement(TrashIcon, null))
+            );
+        };
+        // END: components/EventItem.tsx
+
         // START: components/DailyDetailView.tsx
         const DailyDetailView = ({ isOpen, onClose, date }) => {
-            const { subjects, addTask, getTasksForDate } = useContext(PlannerContext);
+            const { subjects, addTask, getTasksForDate, addEvent, getEventsForDate } = useContext(PlannerContext);
             const [isAddingTask, setIsAddingTask] = useState(false);
             const [newPlan, setNewPlan] = useState('');
             const [selectedSubjectId, setSelectedSubjectId] = useState('');
+            
+            const [isAddingEvent, setIsAddingEvent] = useState(false);
+            const [newEventText, setNewEventText] = useState('');
 
             const tasksForDate = date ? getTasksForDate(date) : [];
+            const eventsForDate = date ? getEventsForDate(date) : [];
 
             useEffect(() => {
                 if (subjects.length > 0) {
@@ -358,11 +429,27 @@
                     }
                 }
             };
+
+            const handleAddEvent = (closeAfter) => (e) => {
+                e.preventDefault();
+                if (date && newEventText.trim()) {
+                    addEvent({ date, text: newEventText.trim() });
+                    setNewEventText('');
+                    if (closeAfter) {
+                        onClose();
+                    } else {
+                        const input = document.querySelector('input[name="new-event"]');
+                        input?.focus();
+                    }
+                }
+            };
             
             useEffect(() => {
                 if (!isOpen) {
                     setIsAddingTask(false);
                     setNewPlan('');
+                    setIsAddingEvent(false);
+                    setNewEventText('');
                 }
             }, [isOpen]);
 
@@ -379,22 +466,34 @@
                         React.createElement("header", { className: "p-4 border-b border-slate-200 bg-white flex justify-between items-center sticky top-0" },
                             React.createElement("div", null,
                                 React.createElement("h2", { className: "text-lg font-bold text-slate-800" }, formattedDate),
-                                React.createElement("p", { className: "text-sm text-slate-500" }, "오늘의 할 일을 관리하세요")
+                                React.createElement("p", { className: "text-sm text-slate-500" }, "오늘의 할 일과 행사를 관리하세요")
                             ),
                             React.createElement("button", { onClick: onClose, className: "p-2 rounded-full hover:bg-slate-100" },
                                 React.createElement(XMarkIcon, null)
                             )
                         ),
-                        React.createElement("div", { className: "flex-grow p-4 overflow-y-auto space-y-2" },
-                            tasksForDate.length === 0 && !isAddingTask && (
-                                React.createElement("div", { className: "text-center py-16" },
-                                    React.createElement("p", { className: "text-slate-500" }, "오늘 할 일이 없습니다."),
-                                    React.createElement("p", { className: "text-sm text-slate-400" }, "새로운 할 일을 추가해 보세요!")
+                        React.createElement("div", { className: "flex-grow p-4 overflow-y-auto space-y-4" },
+                            React.createElement("div", null,
+                                React.createElement("h3", { className: "font-semibold text-slate-700 mb-2" }, "오늘의 행사"),
+                                React.createElement("div", { className: "space-y-2" },
+                                    eventsForDate.length > 0 ? (
+                                        eventsForDate.map(event => React.createElement(EventItem, { key: event.id, event: event }))
+                                    ) : (
+                                        !isAddingTask && !isAddingEvent && React.createElement("p", { className: "text-sm text-slate-400 text-center py-4" }, "예정된 행사가 없습니다.")
+                                    )
                                 )
                             ),
-                            tasksForDate.map(task => (
-                                React.createElement(TaskItem, { key: task.id, task: task })
-                            ))
+                            React.createElement("hr", { className: "my-4" }),
+                            React.createElement("div", null,
+                                React.createElement("h3", { className: "font-semibold text-slate-700 mb-2" }, "오늘의 할 일"),
+                                React.createElement("div", { className: "space-y-2" },
+                                    tasksForDate.length > 0 ? (
+                                        tasksForDate.map(task => React.createElement(TaskItem, { key: task.id, task: task }))
+                                    ) : (
+                                        !isAddingTask && !isAddingEvent && React.createElement("p", { className: "text-sm text-slate-400 text-center py-4" }, "예정된 할 일이 없습니다.")
+                                    )
+                                )
+                            )
                         ),
                         React.createElement("div", { className: "p-4 border-t border-slate-200 bg-white" },
                             isAddingTask ? (
@@ -423,15 +522,38 @@
                                         React.createElement("button", { type: "button", onClick: handleAddTask(true), className: "px-4 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-700 text-sm font-medium" }, "추가 후 닫기")
                                     )
                                 )
+                            ) : isAddingEvent ? (
+                                React.createElement("form", { className: "space-y-3", onSubmit: handleAddEvent(false) },
+                                    React.createElement("input", {
+                                        type: "text",
+                                        name: "new-event",
+                                        value: newEventText,
+                                        onChange: (e) => setNewEventText(e.target.value),
+                                        placeholder: "새로운 행사 내용을 입력하세요...",
+                                        className: "w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none text-slate-900 placeholder:text-slate-400",
+                                        autoFocus: true
+                                    }),
+                                    React.createElement("div", { className: "flex justify-end gap-2" },
+                                        React.createElement("button", { type: "button", onClick: () => setIsAddingEvent(false), className: "px-4 py-2 bg-slate-200 text-slate-800 rounded-lg hover:bg-slate-300 text-sm font-medium" }, "취소"),
+                                        React.createElement("button", { type: "submit", className: "px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 text-sm font-medium" }, "추가"),
+                                        React.createElement("button", { type: "button", onClick: handleAddEvent(true), className: "px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 text-sm font-medium" }, "추가 후 닫기")
+                                    )
+                                )
                             ) : (
-                                React.createElement("div", { className: "grid grid-cols-2 gap-3" },
+                                React.createElement("div", { className: "grid grid-cols-1 gap-3" },
+                                    React.createElement("div", { className: "grid grid-cols-2 gap-3" },
+                                        React.createElement("button", { onClick: () => setIsAddingEvent(true), className: "w-full flex items-center justify-center gap-2 py-3 bg-teal-600 text-white rounded-lg shadow-sm hover:bg-teal-700 transition-colors font-semibold" },
+                                            React.createElement(PlusIcon, null),
+                                            "행사 추가"
+                                        ),
+                                        React.createElement("button", { onClick: () => setIsAddingTask(true), className: "w-full flex items-center justify-center gap-2 py-3 bg-sky-600 text-white rounded-lg shadow-sm hover:bg-sky-700 transition-colors font-semibold" },
+                                            React.createElement(PlusIcon, null),
+                                            "할 일 추가"
+                                        )
+                                    ),
                                     React.createElement("button", { onClick: onClose, className: "w-full flex items-center justify-center gap-2 py-3 bg-slate-200 text-slate-800 rounded-lg shadow-sm hover:bg-slate-300 transition-colors font-semibold" },
                                         React.createElement(ChevronLeftIcon, { className: "h-5 w-5" }),
                                         "대시보드"
-                                    ),
-                                    React.createElement("button", { onClick: () => setIsAddingTask(true), className: "w-full flex items-center justify-center gap-2 py-3 bg-sky-600 text-white rounded-lg shadow-sm hover:bg-sky-700 transition-colors font-semibold" },
-                                        React.createElement(PlusIcon, null),
-                                        "할 일 추가"
                                     )
                                 )
                             )
@@ -713,7 +835,7 @@
                         React.createElement("div", { className: "bg-white p-4 rounded-xl shadow-sm" },
                             React.createElement("h3", { className: "font-bold text-lg text-slate-800 mb-4" }, "이번 주 과목별 완료된 할 일"),
                             subjectCompletionData.length > 0 ? (
-                                React.createElement(ResponsiveContainer, { width: "100%", height: 250 },
+                                React.createElement(ResponsiveContainer, { width: "100%", height: 300 },
                                     React.createElement(PieChart, null,
                                         React.createElement(Pie, {
                                             data: subjectCompletionData,
@@ -762,6 +884,13 @@
         // END: components/StatsView.tsx
         
         // START: components/WeeklyDashboard.tsx
+        const getEventStatusIcon = (completed) => {
+            if (completed) {
+                return React.createElement(CheckIcon, { className: "h-3 w-3 text-teal-600" });
+            }
+            return React.createElement(CircleIcon, { className: "h-2 w-2 text-slate-400" });
+        };
+
         const getStatusIcon = (status) => {
             switch (status) {
                 case TaskStatus.Done: return React.createElement(CheckIcon, { className: "h-3 w-3 text-green-600" });
@@ -772,12 +901,16 @@
         };
 
         const WeeklyDashboard = () => {
-            const { tasks, getSubjectById, dDay, weeklyGoals, motivationalQuote, updateMotivationalQuote, setSelectedDate, toggleWeeklyGoal } = useContext(PlannerContext);
+            const { tasks, getSubjectById, dDay, weeklyGoals, motivationalQuotes, updateWeeklyMotivationalQuote, setSelectedDate, toggleWeeklyGoal, getEventsForDate } = useContext(PlannerContext);
             const [currentDate, setCurrentDate] = useState(new Date());
 
             const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
             const weekEnd = endOfWeek(currentDate, { weekStartsOn: 1 });
             const days = eachDayOfInterval({ start: weekStart, end: weekEnd });
+
+            // --- MODIFIED: Logic for weekly quote ---
+            const weekStartKey = format(weekStart, 'yyyy-MM-dd');
+            const currentWeeklyQuote = motivationalQuotes[weekStartKey] || '';
 
             const tasksByDate = useMemo(() => {
                 const map = new Map();
@@ -788,6 +921,16 @@
                 });
                 return map;
             }, [tasks, days]);
+
+            const eventsByDate = useMemo(() => {
+                const map = new Map();
+                days.forEach(day => {
+                    const dateStr = format(day, 'yyyy-MM-dd');
+                    const dayEvents = getEventsForDate(dateStr);
+                    map.set(dateStr, dayEvents);
+                });
+                return map;
+            }, [getEventsForDate, days]);
 
             const dDayDiff = useMemo(() => {
                 if (!dDay.targetDate) return null;
@@ -802,9 +945,19 @@
                 React.createElement("div", { className: "flex flex-col h-full" },
                     React.createElement("header", { className: "px-2 pt-2" },
                         React.createElement("div", { className: "flex justify-between items-center mb-2" },
-                            React.createElement("button", { onClick: () => setCurrentDate(subDays(currentDate, 7)), className: "p-2 rounded-full hover:bg-slate-200" }, React.createElement(ChevronLeftIcon, null)),
                             React.createElement("h2", { className: "font-bold text-lg text-slate-800" }, format(weekStart, 'yyyy년 M월')),
-                            React.createElement("button", { onClick: () => setCurrentDate(addDays(currentDate, 7)), className: "p-2 rounded-full hover:bg-slate-200" }, React.createElement(ChevronRightIcon, null))
+                            React.createElement("div", { className: "flex items-center" },
+                                React.createElement("button", {
+                                    onClick: () => setCurrentDate(subDays(currentDate, 7)),
+                                    "aria-label": "이전 주",
+                                    className: "p-2 rounded-l-md border border-slate-300 bg-white hover:bg-slate-50"
+                                }, React.createElement(ChevronLeftIcon, { className: "h-5 w-5 text-slate-600" })),
+                                React.createElement("button", {
+                                    onClick: () => setCurrentDate(addDays(currentDate, 7)),
+                                    "aria-label": "다음 주",
+                                    className: "p-2 rounded-r-md border-t border-b border-r border-slate-300 bg-white hover:bg-slate-50"
+                                }, React.createElement(ChevronRightIcon, { className: "h-5 w-5 text-slate-600" }))
+                            )
                         ),
                         dDay.title && dDayDiff !== null && (
                             React.createElement("div", { className: "bg-gradient-to-r from-sky-500 to-indigo-500 text-white p-4 rounded-lg shadow-md text-center mb-2 space-y-2" },
@@ -812,18 +965,19 @@
                                     React.createElement("p", { className: "font-semibold text-lg" }, dDay.title),
                                     React.createElement("p", { className: "text-3xl font-bold" }, `D-${dDayDiff >= 0 ? dDayDiff : '+' + Math.abs(dDayDiff)}`)
                                 ),
+                                // --- MODIFIED: Input for weekly quote ---
                                 React.createElement("input", {
                                     type: "text",
-                                    value: motivationalQuote,
-                                    onChange: (e) => updateMotivationalQuote(e.target.value),
-                                    placeholder: "동기 부여 문구를 입력하세요...",
-                                    className: "w-full text-center bg-white/30 p-2 rounded-lg text-sm font-medium text-white placeholder:text-white/70 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-white"
+                                    value: currentWeeklyQuote,
+                                    onChange: (e) => updateWeeklyMotivationalQuote(weekStartKey, e.target.value),
+                                    placeholder: "이번 주의 동기 부여 문구를 입력하세요...",
+                                    className: "w-full text-center bg-white/20 p-2 rounded-lg text-sm font-medium text-white placeholder:text-white/70 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-white"
                                 })
                             )
                         )
                     ),
                     React.createElement("div", { className: "bg-white p-3 rounded-lg shadow-sm mb-2" },
-                        React.createElement("h3", { className: "font-semibold text-slate-700 mb-2 text-sm text-right" }, "To-do list for this week"),
+                        React.createElement("h3", { className: "font-semibold text-slate-700 mb-2 text-sm text-right" }, "이번 주 목표"),
                         React.createElement("div", { className: "space-y-0.5" },
                             weeklyGoals.slice(0, 3).map((goal, index) => (
                                 React.createElement("div", { key: goal.id, className: "flex items-center" },
@@ -851,6 +1005,7 @@
                         days.map(day => {
                             const dateStr = format(day, 'yyyy-MM-dd');
                             const dayTasks = tasksByDate.get(dateStr) || [];
+                            const dayEvents = eventsByDate.get(dateStr) || [];
                             const isCurrentDay = isToday(day);
                             const dayOfWeek = getDay(day);
 
@@ -858,6 +1013,11 @@
                             if (dayOfWeek === 6) { dayBgClass = 'bg-sky-50 hover:bg-sky-100'; }
                             else if (dayOfWeek === 0) { dayBgClass = 'bg-red-50 hover:bg-red-100'; }
                             
+                            const totalItems = dayTasks.length + dayEvents.length;
+                            const maxTasksToShow = 10;
+                            const maxEventsToShow = 2;
+                            const itemsToShow = maxTasksToShow + maxEventsToShow;
+
                             return (
                                 React.createElement("div", {
                                     key: dateStr,
@@ -869,7 +1029,7 @@
                                         React.createElement("p", { className: `font-semibold text-lg ${isCurrentDay ? 'text-white bg-sky-600 rounded-full w-7 h-7 flex items-center justify-center mx-auto' : 'text-slate-800'}` }, format(day, 'd'))
                                     ),
                                     React.createElement("div", { className: "space-y-1 overflow-y-auto flex-grow" },
-                                        dayTasks.slice(0, 4).map(task => {
+                                        dayTasks.slice(0, maxTasksToShow).map(task => {
                                             const subject = getSubjectById(task.subjectId);
                                             const bgColor = subject ? subject.color.split(' ')[0] : 'bg-slate-100';
                                             return (
@@ -879,7 +1039,13 @@
                                                 )
                                             )
                                         }),
-                                        dayTasks.length > 4 && React.createElement("p", { className: "text-xs text-center text-slate-500 mt-1" }, `+${dayTasks.length - 4} more`)
+                                        dayEvents.slice(0, maxEventsToShow).map(event => (
+                                            React.createElement("div", { key: event.id, className: "flex items-center gap-1.5 p-1 rounded-md text-xs bg-teal-100" },
+                                                getEventStatusIcon(event.completed),
+                                                React.createElement("span", { className: `truncate ${event.completed ? 'text-slate-500' : 'text-slate-700'}` }, event.text)
+                                            )
+                                        )),
+                                        totalItems > itemsToShow && React.createElement("p", { className: "text-xs text-center text-slate-500 mt-1" }, `+${totalItems - itemsToShow} more`)
                                     )
                                 )
                             );
@@ -916,8 +1082,8 @@
             };
 
             return (
-                React.createElement("div", { className: "min-h-screen font-sans flex flex-col mx-auto" },
-                    React.createElement("header", { className: "p-4 border-b border-slate-200 bg-gradient-to-r from-sky-200 to-sky-200 sticky top-0 z-20 flex items-center relative" },
+                React.createElement("div", { className: "min-h-screen font-sans flex flex-col max-w-screen-2xl mx-auto" },
+                    React.createElement("header", { className: "p-4 border-b border-slate-200 bg-sky-100 sticky top-0 z-20 flex items-center relative" },
                         activeView !== 'dashboard' && (
                             React.createElement("button", { onClick: () => setActiveView('dashboard'), className: "absolute left-4 p-2 rounded-full hover:bg-black/10 transition-colors", "aria-label": "대시보드로 돌아가기" },
                                 React.createElement(ChevronLeftIcon, { className: "h-6 w-6 text-slate-700" })
