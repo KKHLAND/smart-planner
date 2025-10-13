@@ -97,12 +97,6 @@
         // END: components/Icons.tsx
 
         // START: hooks/usePlannerData.ts
-        const getInitialDate = () => {
-            const today = new Date();
-            const futureDate = new Date(today.setDate(today.getDate() + 402));
-            return format(futureDate, 'yyyy-MM-dd');
-        };
-
         const usePlannerData = () => {
             const [data, setData] = useState(() => {
                 try {
@@ -147,7 +141,7 @@
                     subjects: INITIAL_SUBJECTS,
                     tasks: [],
                     events: [],
-                    dDay: { targetDate: getInitialDate(), title: '수능' },
+                    dDay: { targetDate: '2026-11-19', title: '수능' },
                     weeklyGoals: [
                         { id: crypto.randomUUID(), text: '핸드폰 안 하기', completed: {} },
                         { id: crypto.randomUUID(), text: '영양제 챙겨 먹기', completed: {} },
@@ -1205,4 +1199,3 @@
     </script>
 </body>
 </html>
-
