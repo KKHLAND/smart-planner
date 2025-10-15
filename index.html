@@ -24,13 +24,11 @@
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
         }
-        /* Hide number input arrows on Chrome, Safari, Edge, Opera */
         input::-webkit-outer-spin-button,
         input::-webkit-inner-spin-button {
           -webkit-appearance: none;
           margin: 0;
         }
-        /* Hide number input arrows on Firefox */
         input[type=number] {
           -moz-appearance: textfield;
         }
@@ -47,16 +45,74 @@
         "date-fns": "https://esm.sh/date-fns@2.30.0",
         "date-fns/locale": "https://esm.sh/date-fns@2.30.0/locale",
         "recharts": "https://esm.sh/recharts@2.12.2?deps=react@18.2.0,react-dom@18.2.0",
-        "clsx": "https://esm.sh/clsx@2.1.0"
+        "clsx": "https://esm.sh/clsx@2.1.0",
+        "firebase/app": "https://esm.sh/firebase@9.23.0/app",
+        "firebase/auth": "https://esm.sh/firebase@9.23.0/auth",
+        "firebase/firestore": "https://esm.sh/firebase@9.23.0/firestore"
       }
     }
     </script>
     <script type="module">
-        import React, { useState, useEffect, useContext, createContext, useMemo, useCallback } from 'react';
+        import React, { useState, useEffect, useContext, createContext, useMemo, useCallback, useRef } from 'react';
         import ReactDOM from 'react-dom/client';
         import { format, parseISO, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, isToday, addDays, subDays, getDay } from 'date-fns';
         import { ko } from 'date-fns/locale';
         import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
+        
+        import { initializeApp } from 'firebase/app';
+        // Auth와 Firestore 모듈을 먼저 임포트하여 컴포넌트 등록을 보장합니다.
+        import 'firebase/auth';
+        import 'firebase/firestore';
+        import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth';
+        import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
+
+        // START: firebase.js
+        const firebaseConfig = {
+          apiKey: "AIzaSyDXosRVrrG0IfGgTZVGcm2Oym5oqQZRpY0",
+          authDomain: "smart-planner-66923.firebaseapp.com",
+          projectId: "smart-planner-66923",
+          storageBucket: "smart-planner-66923.firebasestorage.app",
+          messagingSenderId: "537649933631",
+          appId: "1:537649933631:web:78e09e78a0fcaa5fbe778a",
+          measurementId: "G-T9260RQK1F"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const googleProvider = new GoogleAuthProvider();
+        // END: firebase.js
+
+        // START: context/AuthContext.tsx
+        const AuthContext = createContext(null);
+
+        const AuthProvider = ({ children }) => {
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const unsubscribe = onAuthStateChanged(auth, (user) => {
+                    setUser(user);
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            const value = { user, loading };
+            
+            if (loading) {
+                return React.createElement("div", { className: "min-h-screen flex items-center justify-center" }, 
+                    React.createElement("p", {className: "text-lg font-semibold text-slate-600"}, "인증 정보를 확인하는 중...")
+                );
+            }
+
+            return React.createElement(AuthContext.Provider, { value }, children);
+        };
+
+        const useAuth = () => {
+            return useContext(AuthContext);
+        };
+        // END: context/AuthContext.tsx
 
         // START: types.ts
         const TaskStatus = {
@@ -75,8 +131,21 @@
            { id: '4', name: '사회', color: 'bg-yellow-200 text-yellow-800' },
            { id: '5', name: '과학', color: 'bg-green-200 text-green-800' },
            { id: '6', name: '기타', color: 'bg-gray-200 text-gray-800' },
-           ];
+        ];
         const DAYS_OF_WEEK = ['일', '월', '화', '수', '목', '금', '토'];
+        const INITIAL_DATA = {
+            subjects: INITIAL_SUBJECTS,
+            tasks: [],
+            events: [],
+            dDay: { targetDate: '2026-11-19', title: '수능' },
+            weeklyGoals: [
+                { id: crypto.randomUUID(), text: '핸드폰 안 하기', completed: {} },
+                { id: crypto.randomUUID(), text: '영양제 챙겨 먹기', completed: {} },
+                { id: crypto.randomUUID(), text: '30분 달리기', completed: {} },
+            ],
+            motivationalQuotes: {},
+            studyRecords: {},
+        };
         // END: constants.ts
 
         // START: components/Icons.tsx
@@ -94,73 +163,57 @@
         const ChevronLeftIcon = (props) => (React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", className: "h-6 w-6", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", strokeWidth: 2, ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M15 19l-7-7 7-7" })));
         const ChevronRightIcon = (props) => (React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", className: "h-6 w-6", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", strokeWidth: 2, ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M9 5l7 7-7 7" })));
         const ClockIcon = (props) => (React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", className: "h-4 w-4", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", strokeWidth: 2, ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" })));
+        const LogoutIcon = (props) => (React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", className: "h-6 w-6", fill:"none", viewBox:"0 0 24 24", stroke:"currentColor", strokeWidth:2, ...props }, React.createElement("path", { strokeLinecap:"round", strokeLinejoin:"round", d:"M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"})));
+        const GoogleIcon = () => (React.createElement("svg", {className:"w-5 h-5", role:"img", viewBox:"0 0 24 24", xmlns:"http://www.w3.org/2000/svg"}, React.createElement("title", null, "Google icon"), React.createElement("path", {fill:"#4285F4", d:"M21.543 10.495h-9.98v3.96h5.787c-.248 1.532-1.463 3.6-4.28 3.62-2.614 0-4.832-2.144-4.832-4.852s2.218-4.852 4.832-4.852c1.49 0 2.456.652 3.015 1.188l2.812-2.787C21.44 5.21 19.14.93 15.68.93c-4.43 0-8.13 3.67-8.13 8.16s3.7 8.16 8.13 8.16c4.63 0 7.82-3.22 7.82-7.95 0-.54-.04-1.07-.12-1.585z"})));
         // END: components/Icons.tsx
 
         // START: hooks/usePlannerData.ts
         const usePlannerData = () => {
-            const [data, setData] = useState(() => {
-                try {
-                    const item = window.localStorage.getItem('plannerData_V2');
-                    if (item) {
-                        const parsedData = JSON.parse(item);
-                        if (!parsedData.events) {
-                            parsedData.events = [];
-                        }
-                        if (!parsedData.motivationalQuotes) {
-                            parsedData.motivationalQuotes = {};
-                            if (parsedData.motivationalQuote) {
-                                const today = new Date();
-                                const weekStartKey = format(startOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd');
-                                parsedData.motivationalQuotes[weekStartKey] = parsedData.motivationalQuote;
-                                delete parsedData.motivationalQuote;
-                            }
-                        }
-                        if (parsedData.weeklyGoals && parsedData.weeklyGoals.length > 0) {
-                            if (typeof parsedData.weeklyGoals[0] === 'string') {
-                                parsedData.weeklyGoals = parsedData.weeklyGoals.map((text) => ({
-                                    id: crypto.randomUUID(),
-                                    text,
-                                    completed: {}
-                                }));
-                            } else if (typeof parsedData.weeklyGoals[0].completed === 'boolean' || parsedData.weeklyGoals[0].completed === undefined) {
-                                parsedData.weeklyGoals = parsedData.weeklyGoals.map((goal) => ({
-                                    ...goal,
-                                    completed: {}
-                                }));
-                            }
-                        }
-                        if (!parsedData.studyRecords) {
-                            parsedData.studyRecords = {};
-                        }
-                        return parsedData;
-                    }
-                } catch (error) {
-                    console.error("Error reading from localStorage", error);
-                }
-                return {
-                    subjects: INITIAL_SUBJECTS,
-                    tasks: [],
-                    events: [],
-                    dDay: { targetDate: '2026-11-19', title: '수능' },
-                    weeklyGoals: [
-                        { id: crypto.randomUUID(), text: '핸드폰 안 하기', completed: {} },
-                        { id: crypto.randomUUID(), text: '영양제 챙겨 먹기', completed: {} },
-                        { id: crypto.randomUUID(), text: '30분 달리기', completed: {} },
-                    ],
-                    motivationalQuotes: {},
-                    studyRecords: {},
-                };
-            });
+            const { user } = useAuth();
+            const [data, setData] = useState(INITIAL_DATA);
+            const [isLoading, setIsLoading] = useState(true);
+            const isInitialLoad = useRef(true);
 
-            const [selectedDate, setSelectedDate] = useState(null);
-
+            // Fetch data from Firestore
             useEffect(() => {
-                try {
-                    window.localStorage.setItem('plannerData_V2', JSON.stringify(data));
-                } catch (error) {
-                    console.error("Error writing to localStorage", error);
+                if (!user) {
+                    setIsLoading(false);
+                    return;
                 }
-            }, [data]);
+
+                const fetchData = async () => {
+                    setIsLoading(true);
+                    const userDocRef = doc(db, 'users', user.uid);
+                    const docSnap = await getDoc(userDocRef);
+
+                    if (docSnap.exists()) {
+                        const firestoreData = docSnap.data();
+                        // Simple migration check for old data structures if needed
+                        if (!firestoreData.events) firestoreData.events = [];
+                        if (!firestoreData.studyRecords) firestoreData.studyRecords = {};
+                        setData(firestoreData);
+                    } else {
+                        // New user, set initial data in Firestore
+                        await setDoc(userDocRef, INITIAL_DATA);
+                        setData(INITIAL_DATA);
+                    }
+                    setIsLoading(false);
+                    isInitialLoad.current = false;
+                };
+
+                fetchData();
+            }, [user]);
+
+            // Save data to Firestore whenever it changes
+            useEffect(() => {
+                if (!user || isInitialLoad.current || isLoading) {
+                    return;
+                }
+                const userDocRef = doc(db, 'users', user.uid);
+                setDoc(userDocRef, data);
+            }, [data, user, isLoading]);
+            
+            const [selectedDate, setSelectedDate] = useState(null);
 
             const addTask = useCallback((task) => {
                 const newTask = {
@@ -278,6 +331,7 @@
 
             return {
                 ...data,
+                isLoading,
                 selectedDate,
                 setSelectedDate,
                 addTask,
@@ -307,7 +361,13 @@
         const PlannerProvider = ({ children }) => {
             const plannerData = usePlannerData();
             return (
-                React.createElement(PlannerContext.Provider, { value: plannerData }, children)
+                React.createElement(PlannerContext.Provider, { value: plannerData }, 
+                    plannerData.isLoading 
+                    ? React.createElement("div", { className: "flex-grow flex items-center justify-center" }, 
+                          React.createElement("p", {className: "text-lg font-semibold text-slate-600"}, "데이터를 불러오는 중...")
+                      )
+                    : children
+                )
             );
         };
         // END: context/PlannerContext.tsx
@@ -407,7 +467,7 @@
                         onChange: () => toggleEventCompletion(event.id),
                         className: "h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
                     }),
-                    React.createElement("span", { className: `text-sm ${event.completed ? 'text-slate-500' : 'text-slate-800'}` }, event.text)
+                    React.createElement("span", { className: `text-sm ${event.completed ? 'text-slate-500 line-through' : 'text-slate-800'}` }, event.text)
                 ),
                 React.createElement("button", { onClick: () => deleteEvent(event.id), className: "p-2 rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600", title: "삭제" }, React.createElement(TrashIcon, null))
             );
@@ -1049,7 +1109,7 @@
                     React.createElement("div", { className: "bg-white p-3 rounded-lg shadow-sm mb-2" },
                         React.createElement("h3", { className: "font-semibold text-slate-700 mb-2 text-sm text-right" }, "이번 주 목표"),
                         React.createElement("div", { className: "space-y-0.5" },
-                            weeklyGoals.slice(0, 3).map((goal, index) => (
+                            (weeklyGoals || []).slice(0, 3).map((goal, index) => (
                                 React.createElement("div", { key: goal.id, className: "flex items-center" },
                                     React.createElement("span", { className: "text-sm text-slate-500 ml-auto mr-2" }, `${index + 1}.`),
                                     React.createElement("span", { className: "text-sm text-slate-600 mr-4" }, goal.text),
@@ -1113,7 +1173,7 @@
                                         dayEvents.slice(0, maxEventsToShow).map(event => (
                                             React.createElement("div", { key: event.id, className: "flex items-center gap-1.5 p-1 rounded-md text-xs bg-teal-100" },
                                                 getEventStatusIcon(event.completed),
-                                                React.createElement("span", { className: `truncate ${event.completed ? 'text-slate-500' : 'text-slate-700'}` }, event.text)
+                                                React.createElement("span", { className: `truncate ${event.completed ? 'text-slate-500 line-through' : 'text-slate-700'}` }, event.text)
                                             )
                                         )),
                                         totalItems > itemsToShow && React.createElement("p", { className: "text-xs text-center text-slate-500 mt-1" }, `+${totalItems - itemsToShow} more`)
@@ -1135,6 +1195,37 @@
         };
         // END: components/WeeklyDashboard.tsx
         
+        // START: components/Login.tsx
+        const Login = () => {
+            const handleGoogleLogin = async () => {
+                try {
+                    await signInWithPopup(auth, googleProvider);
+                } catch (error) {
+                    console.error("Google 로그인 실패:", error);
+                    alert("로그인에 실패했습니다. 다시 시도해주세요.");
+                }
+            };
+
+            return React.createElement("div", { className: "min-h-screen bg-slate-100 flex flex-col justify-center items-center p-4" },
+                React.createElement("div", { className: "w-full max-w-sm text-center" },
+                    React.createElement("h1", { className: "text-4xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-sky-600 to-violet-600" }, "Momentum"),
+                    React.createElement("p", { className: "mt-2 text-lg text-slate-600" }, "나만의 스마트 학습 라이프 로그"),
+                    React.createElement("div", { className: "mt-12 bg-white p-8 rounded-2xl shadow-xl" },
+                        React.createElement("h2", { className: "text-xl font-semibold text-slate-800 mb-2" }, "시작하기"),
+                        React.createElement("p", { className: "text-slate-500 mb-6" }, "Google 계정으로 로그인하여 데이터를 안전하게 동기화하세요."),
+                        React.createElement("button", {
+                            onClick: handleGoogleLogin,
+                            className: "w-full flex items-center justify-center gap-3 py-3 px-4 bg-white border border-slate-300 rounded-lg shadow-sm hover:shadow-md transition-shadow font-semibold text-slate-700"
+                        }, 
+                            React.createElement(GoogleIcon, null),
+                            "Google 계정으로 로그인"
+                        )
+                    )
+                )
+            );
+        };
+        // END: components/Login.tsx
+
         // START: App.tsx
         const NavButton = ({ label, icon, isActive, onClick }) => (
             React.createElement("button", {
@@ -1147,8 +1238,19 @@
         );
 
         const App = () => {
+            const { user } = useAuth();
             const [activeView, setActiveView] = useState('dashboard');
             const { selectedDate, setSelectedDate } = useContext(PlannerContext);
+
+            if (!user) {
+                return React.createElement(Login, null);
+            }
+
+            const handleLogout = async () => {
+                if (confirm('로그아웃 하시겠습니까?')) {
+                    await signOut(auth);
+                }
+            };
 
             const goToDashboard = () => setActiveView('dashboard');
 
@@ -1162,15 +1264,21 @@
 
             return (
                 React.createElement("div", { className: "min-h-screen font-sans flex flex-col max-w-screen-2xl mx-auto" },
-                    React.createElement("header", { className: "p-4 border-b border-slate-200 bg-sky-100 sticky top-0 z-20 flex items-center relative" },
-                        activeView !== 'dashboard' && (
-                            React.createElement("button", { onClick: () => setActiveView('dashboard'), className: "absolute left-4 p-2 rounded-full hover:bg-black/10 transition-colors", "aria-label": "대시보드로 돌아가기" },
-                                React.createElement(ChevronLeftIcon, { className: "h-6 w-6 text-slate-700" })
-                            )
+                    React.createElement("header", { className: "p-4 border-b border-slate-200 bg-sky-100 sticky top-0 z-20 flex items-center justify-between" },
+                        React.createElement("div", { className: "flex items-center gap-2" },
+                           user.photoURL && React.createElement("img", { src: user.photoURL, alt: user.displayName, className:"w-8 h-8 rounded-full"}),
+                           React.createElement("span", { className: "text-sm font-semibold text-slate-700 hidden sm:block"}, `${user.displayName}님 환영합니다!`)
                         ),
-                        React.createElement("div", { className: "text-center w-full px-16" },
+                        React.createElement("div", { className: "text-center absolute left-1/2 -translate-x-1/2" },
                             React.createElement("h1", { className: "text-2xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-sky-600 to-violet-600" }, "Momentum"),
                             React.createElement("p", { className: "text-sm text-slate-600" }, "나만의 스마트 학습 라이프 로그")
+                        ),
+                        React.createElement("button", { 
+                            onClick: handleLogout, 
+                            className: "p-2 rounded-full hover:bg-slate-200/80 transition-colors",
+                            title: "로그아웃"
+                        },
+                            React.createElement(LogoutIcon, {className: "text-slate-600"})
                         )
                     ),
                     React.createElement("main", { className: "flex-grow p-2 sm:p-4 bg-slate-100/50" }, renderView()),
@@ -1191,8 +1299,10 @@
         const root = ReactDOM.createRoot(rootElement);
         root.render(
             React.createElement(React.StrictMode, null,
-                React.createElement(PlannerProvider, null,
-                    React.createElement(App, null)
+                React.createElement(AuthProvider, null,
+                    React.createElement(PlannerProvider, null,
+                        React.createElement(App, null)
+                    )
                 )
             )
         );
