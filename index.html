@@ -97,59 +97,74 @@
         // END: components/Icons.tsx
 
         // START: hooks/usePlannerData.ts
+        const createDefaultData = () => ({
+            subjects: INITIAL_SUBJECTS,
+            tasks: [],
+            events: [],
+            dDay: { targetDate: '2026-11-19', title: '수능' },
+            weeklyGoals: [
+                { id: crypto.randomUUID(), text: '핸드폰 안 하기', completed: {} },
+                { id: crypto.randomUUID(), text: '영양제 챙겨 먹기', completed: {} },
+                { id: crypto.randomUUID(), text: '30분 달리기', completed: {} },
+            ],
+            motivationalQuotes: {},
+            studyRecords: {},
+        });
+
+        const normalizePlannerData = (parsedData) => {
+            if (!parsedData || typeof parsedData !== 'object' || Array.isArray(parsedData)) {
+                throw new Error('Invalid planner data');
+            }
+            if (!parsedData.subjects || parsedData.subjects.length === 0) {
+                parsedData.subjects = INITIAL_SUBJECTS;
+            }
+            if (!parsedData.tasks) {
+                parsedData.tasks = [];
+            }
+            if (!parsedData.dDay) {
+                parsedData.dDay = { targetDate: '2026-11-19', title: '수능' };
+            }
+            if (!parsedData.weeklyGoals) {
+                parsedData.weeklyGoals = [];
+            }
+            if (!parsedData.events) {
+                parsedData.events = [];
+            }
+            if (!parsedData.motivationalQuotes) {
+                parsedData.motivationalQuotes = {};
+                if (parsedData.motivationalQuote) {
+                    const today = new Date();
+                    const weekStartKey = format(startOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd');
+                    parsedData.motivationalQuotes[weekStartKey] = parsedData.motivationalQuote;
+                    delete parsedData.motivationalQuote;
+                }
+            }
+            parsedData.weeklyGoals = parsedData.weeklyGoals.map((goal) => {
+                if (typeof goal === 'string') {
+                    return { id: crypto.randomUUID(), text: goal, completed: {} };
+                }
+                if (typeof goal.completed !== 'object' || goal.completed === null) {
+                    return { ...goal, completed: {} };
+                }
+                return goal;
+            });
+            if (!parsedData.studyRecords) {
+                parsedData.studyRecords = {};
+            }
+            return parsedData;
+        };
+
         const usePlannerData = () => {
             const [data, setData] = useState(() => {
                 try {
                     const item = window.localStorage.getItem('plannerData_V2');
                     if (item) {
-                        const parsedData = JSON.parse(item);
-                        if (!parsedData.events) {
-                            parsedData.events = [];
-                        }
-                        if (!parsedData.motivationalQuotes) {
-                            parsedData.motivationalQuotes = {};
-                            if (parsedData.motivationalQuote) {
-                                const today = new Date();
-                                const weekStartKey = format(startOfWeek(today, { weekStartsOn: 1 }), 'yyyy-MM-dd');
-                                parsedData.motivationalQuotes[weekStartKey] = parsedData.motivationalQuote;
-                                delete parsedData.motivationalQuote;
-                            }
-                        }
-                        if (parsedData.weeklyGoals && parsedData.weeklyGoals.length > 0) {
-                            if (typeof parsedData.weeklyGoals[0] === 'string') {
-                                parsedData.weeklyGoals = parsedData.weeklyGoals.map((text) => ({
-                                    id: crypto.randomUUID(),
-                                    text,
-                                    completed: {}
-                                }));
-                            } else if (typeof parsedData.weeklyGoals[0].completed === 'boolean' || parsedData.weeklyGoals[0].completed === undefined) {
-                                parsedData.weeklyGoals = parsedData.weeklyGoals.map((goal) => ({
-                                    ...goal,
-                                    completed: {}
-                                }));
-                            }
-                        }
-                        if (!parsedData.studyRecords) {
-                            parsedData.studyRecords = {};
-                        }
-                        return parsedData;
+                        return normalizePlannerData(JSON.parse(item));
                     }
                 } catch (error) {
                     console.error("Error reading from localStorage", error);
                 }
-                return {
-                    subjects: INITIAL_SUBJECTS,
-                    tasks: [],
-                    events: [],
-                    dDay: { targetDate: '2026-11-19', title: '수능' },
-                    weeklyGoals: [
-                        { id: crypto.randomUUID(), text: '핸드폰 안 하기', completed: {} },
-                        { id: crypto.randomUUID(), text: '영양제 챙겨 먹기', completed: {} },
-                        { id: crypto.randomUUID(), text: '30분 달리기', completed: {} },
-                    ],
-                    motivationalQuotes: {},
-                    studyRecords: {},
-                };
+                return createDefaultData();
             });
 
             const [selectedDate, setSelectedDate] = useState(null);
@@ -186,6 +201,22 @@
                     tasks: prevData.tasks.filter(task => task.id !== taskId),
                 }));
             }, []);
+
+            const migrateTask = useCallback((taskId) => {
+                setData(prevData => {
+                    const task = prevData.tasks.find(t => t.id === taskId);
+                    if (!task || task.status === TaskStatus.Migrated) return prevData;
+                    const nextDate = format(addDays(parseISO(task.date), 1), 'yyyy-MM-dd');
+                    const copiedTask = { ...task, id: crypto.randomUUID(), date: nextDate, status: TaskStatus.ToDo };
+                    return {
+                        ...prevData,
+                        tasks: [
+                            ...prevData.tasks.map(t => t.id === taskId ? { ...t, status: TaskStatus.Migrated } : t),
+                            copiedTask,
+                        ],
+                    };
+                });
+            }, []);
             
             const addEvent = useCallback((event) => {
                 const newEvent = {
@@ -218,10 +249,21 @@
             }, []);
 
             const deleteSubject = useCallback((subjectId) => {
-                setData(prevData => ({
-                    ...prevData,
-                    subjects: prevData.subjects.filter(sub => sub.id !== subjectId)
-                }));
+                setData(prevData => {
+                    let subjects = prevData.subjects.filter(sub => sub.id !== subjectId);
+                    let tasks = prevData.tasks;
+                    if (prevData.tasks.some(task => task.subjectId === subjectId)) {
+                        let fallback = subjects.find(sub => sub.name === '기타');
+                        if (!fallback) {
+                            fallback = { id: crypto.randomUUID(), name: '기타', color: 'bg-gray-200 text-gray-800' };
+                            subjects = [...subjects, fallback];
+                        }
+                        tasks = prevData.tasks.map(task =>
+                            task.subjectId === subjectId ? { ...task, subjectId: fallback.id } : task
+                        );
+                    }
+                    return { ...prevData, subjects, tasks };
+                });
             }, []);
             
             const updateDDay = useCallback((dDay) => {
@@ -264,6 +306,16 @@
                 return data.studyRecords?.[date] || 0;
             }, [data.studyRecords]);
 
+            const exportData = useCallback(() => {
+                return JSON.stringify(data, null, 2);
+            }, [data]);
+
+            const importData = useCallback((jsonString) => {
+                const normalized = normalizePlannerData(JSON.parse(jsonString));
+                window.localStorage.setItem('plannerData_V2', JSON.stringify(normalized));
+                setData(normalized);
+            }, []);
+
             const getSubjectById = useCallback((id) => {
                 return data.subjects.find(sub => sub.id === id);
             }, [data.subjects]);
@@ -283,6 +335,9 @@
                 addTask,
                 updateTask,
                 deleteTask,
+                migrateTask,
+                exportData,
+                importData,
                 addEvent,
                 toggleEventCompletion,
                 deleteEvent,
@@ -322,7 +377,7 @@
         );
 
         const TaskItem = ({ task }) => {
-            const { getSubjectById, updateTask, deleteTask, subjects } = useContext(PlannerContext);
+            const { getSubjectById, updateTask, deleteTask, migrateTask, subjects } = useContext(PlannerContext);
             const subject = getSubjectById(task.subjectId);
 
             const [isEditing, setIsEditing] = useState(false);
@@ -383,7 +438,7 @@
                         React.createElement("div", { className: "flex gap-1" },
                             React.createElement(StatusButton, { onClick: () => setStatus(TaskStatus.Done), isActive: task.status === TaskStatus.Done, activeClass: "bg-green-100 text-green-700", label: "완료", icon: React.createElement(CheckIcon, null) }),
                             React.createElement(StatusButton, { onClick: () => setStatus(TaskStatus.NotDone), isActive: task.status === TaskStatus.NotDone, activeClass: "bg-red-100 text-red-700", label: "미완료", icon: React.createElement(XMarkIcon, null) }),
-                            React.createElement(StatusButton, { onClick: () => setStatus(TaskStatus.Migrated), isActive: task.status === TaskStatus.Migrated, activeClass: "bg-yellow-100 text-yellow-700", label: "미룸", icon: React.createElement(ArrowRightIcon, null) }),
+                            React.createElement(StatusButton, { onClick: () => migrateTask(task.id), isActive: task.status === TaskStatus.Migrated, activeClass: "bg-yellow-100 text-yellow-700", label: "미룸 (다음 날로 복사)", icon: React.createElement(ArrowRightIcon, null) }),
                             task.status !== TaskStatus.ToDo && React.createElement(StatusButton, { onClick: () => setStatus(TaskStatus.ToDo), isActive: false, activeClass: "", label: "초기화", icon: React.createElement(ArrowUturnLeftIcon, null) })
                         ),
                         React.createElement("div", { className: "flex items-center" },
@@ -538,7 +593,7 @@
                                     React.createElement("input", {
                                         type: "number",
                                         value: studyHours,
-                                        onChange: (e) => setStudyHours(parseInt(e.target.value, 10) || 0),
+                                        onChange: (e) => setStudyHours(Math.max(0, parseInt(e.target.value, 10) || 0)),
                                         min: "0",
                                         className: "w-full text-center px-2 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-slate-900 placeholder:text-slate-400"
                                     }),
@@ -546,7 +601,7 @@
                                     React.createElement("input", {
                                         type: "number",
                                         value: studyMinutes,
-                                        onChange: (e) => setStudyMinutes(parseInt(e.target.value, 10) || 0),
+                                        onChange: (e) => setStudyMinutes(Math.min(59, Math.max(0, parseInt(e.target.value, 10) || 0))),
                                         min: "0",
                                         max: "59",
                                         className: "w-full text-center px-2 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-slate-900 placeholder:text-slate-400"
@@ -681,7 +736,7 @@
         };
 
         const SettingsView = ({ goToDashboard }) => {
-            const { dDay, updateDDay, weeklyGoals, updateWeeklyGoals, subjects, addSubject, deleteSubject } = useContext(PlannerContext);
+            const { dDay, updateDDay, weeklyGoals, updateWeeklyGoals, subjects, addSubject, deleteSubject, tasks, exportData, importData } = useContext(PlannerContext);
             const [dDayTitle, setDDayTitle] = useState(dDay.title);
             const [dDayDate, setDDayDate] = useState(dDay.targetDate);
             const [isCalendarOpen, setIsCalendarOpen] = useState(false);
@@ -719,6 +774,46 @@
                     addSubject({ name: newSubjectName.trim(), color: newSubjectColor });
                     setNewSubjectName('');
                 }
+            };
+
+            const handleDeleteSubject = (subject) => {
+                const affectedCount = tasks.filter(task => task.subjectId === subject.id).length;
+                const message = affectedCount > 0
+                    ? `'${subject.name}' 과목을 삭제할까요?\n이 과목의 할 일 ${affectedCount}개는 '기타' 과목으로 이동됩니다.`
+                    : `'${subject.name}' 과목을 삭제할까요?`;
+                if (window.confirm(message)) {
+                    deleteSubject(subject.id);
+                }
+            };
+
+            const handleExport = () => {
+                const blob = new Blob([exportData()], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `momentum-backup-${format(new Date(), 'yyyy-MM-dd')}.json`;
+                link.click();
+                URL.revokeObjectURL(url);
+            };
+
+            const handleImportFile = (e) => {
+                const input = e.target;
+                const file = input.files && input.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    try {
+                        if (window.confirm('현재 데이터를 백업 파일의 내용으로 모두 덮어씁니다. 계속할까요?')) {
+                            importData(reader.result);
+                            alert('데이터를 복원했습니다!');
+                            window.location.reload();
+                        }
+                    } catch (error) {
+                        alert('백업 파일을 읽을 수 없습니다. 올바른 백업 파일인지 확인해주세요.');
+                    }
+                    input.value = '';
+                };
+                reader.readAsText(file);
             };
             
             const colorOptions = [
@@ -786,7 +881,7 @@
                                 subjects.map(sub => (
                                     React.createElement("div", { key: sub.id, className: "flex items-center justify-between p-2 bg-slate-50 rounded-lg" },
                                         React.createElement("span", { className: `px-3 py-1 text-sm font-semibold rounded-full ${sub.color}` }, sub.name),
-                                        React.createElement("button", { onClick: () => deleteSubject(sub.id), className: "p-2 rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600" }, React.createElement(TrashIcon, null))
+                                        React.createElement("button", { onClick: () => handleDeleteSubject(sub), className: "p-2 rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600" }, React.createElement(TrashIcon, null))
                                     )
                                 ))
                             ),
@@ -809,6 +904,15 @@
                                         React.createElement(PlusIcon, null), " 과목 추가"
                                     )
                                 )
+                            )
+                        ),
+                        React.createElement("div", { className: "bg-white p-4 rounded-xl shadow-sm" },
+                            React.createElement("h3", { className: "font-bold text-lg text-slate-800 mb-2" }, "데이터 백업 및 복원"),
+                            React.createElement("p", { className: "text-sm text-slate-500 mb-4" }, "모든 기록은 이 브라우저에만 저장됩니다. 기록을 잃지 않도록 주기적으로 백업 파일을 저장해 두세요."),
+                            React.createElement("div", { className: "grid grid-cols-2 gap-3" },
+                                React.createElement("button", { onClick: handleExport, className: "w-full py-3 bg-sky-600 text-white rounded-lg hover:bg-sky-700 font-semibold" }, "데이터 내보내기 (백업)"),
+                                React.createElement("label", { htmlFor: "import-backup-file", className: "w-full py-3 bg-white border border-sky-600 text-sky-700 rounded-lg hover:bg-sky-50 font-semibold text-center cursor-pointer" }, "데이터 가져오기 (복원)"),
+                                React.createElement("input", { id: "import-backup-file", type: "file", accept: ".json,application/json", onChange: handleImportFile, className: "hidden" })
                             )
                         ),
                         React.createElement("div", { className: "mt-6" },
@@ -973,6 +1077,10 @@
             const weekStartKey = format(weekStart, 'yyyy-MM-dd');
             const currentWeeklyQuote = motivationalQuotes[weekStartKey] || '';
 
+            const weekRangeLabel = isSameMonth(weekStart, weekEnd)
+                ? `${format(weekStart, 'yyyy년 M월 d일')} ~ ${format(weekEnd, 'd일')}`
+                : `${format(weekStart, 'yyyy년 M월 d일')} ~ ${format(weekEnd, 'M월 d일')}`;
+
             const tasksByDate = useMemo(() => {
                 const map = new Map();
                 days.forEach(day => {
@@ -1016,13 +1124,17 @@
                 React.createElement("div", { className: "flex flex-col h-full" },
                     React.createElement("header", { className: "px-2 pt-2" },
                         React.createElement("div", { className: "flex justify-between items-center mb-2" },
-                            React.createElement("h2", { className: "font-bold text-lg text-slate-800" }, format(weekStart, 'yyyy년 M월')),
+                            React.createElement("h2", { className: "font-bold text-lg text-slate-800" }, weekRangeLabel),
                             React.createElement("div", { className: "flex items-center" },
                                 React.createElement("button", {
                                     onClick: () => setCurrentDate(subDays(currentDate, 7)),
                                     "aria-label": "이전 주",
                                     className: "p-2 rounded-l-md border border-slate-300 bg-white hover:bg-slate-50"
                                 }, React.createElement(ChevronLeftIcon, { className: "h-5 w-5 text-slate-600" })),
+                                React.createElement("button", {
+                                    onClick: () => setCurrentDate(new Date()),
+                                    className: "px-3 py-2 border-t border-b border-r border-slate-300 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-600"
+                                }, "오늘"),
                                 React.createElement("button", {
                                     onClick: () => setCurrentDate(addDays(currentDate, 7)),
                                     "aria-label": "다음 주",
@@ -1034,7 +1146,7 @@
                             React.createElement("div", { className: "bg-gradient-to-r from-sky-500 to-indigo-500 text-white p-4 rounded-lg shadow-md text-center mb-2 space-y-2" },
                                 React.createElement("div", null,
                                     React.createElement("p", { className: "font-semibold text-lg" }, dDay.title),
-                                    React.createElement("p", { className: "text-3xl font-bold" }, `D-${dDayDiff >= 0 ? dDayDiff : '+' + Math.abs(dDayDiff)}`)
+                                    React.createElement("p", { className: "text-3xl font-bold" }, dDayDiff > 0 ? `D-${dDayDiff}` : dDayDiff === 0 ? 'D-Day' : `D+${Math.abs(dDayDiff)}`)
                                 ),
                                 React.createElement("input", {
                                     type: "text",
@@ -1087,7 +1199,8 @@
                             const totalItems = dayTasks.length + dayEvents.length;
                             const maxTasksToShow = 10;
                             const maxEventsToShow = 2;
-                            const itemsToShow = maxTasksToShow + maxEventsToShow;
+                            const shownItems = Math.min(dayTasks.length, maxTasksToShow) + Math.min(dayEvents.length, maxEventsToShow);
+                            const hiddenItems = totalItems - shownItems;
 
                             return (
                                 React.createElement("div", {
@@ -1116,7 +1229,7 @@
                                                 React.createElement("span", { className: `truncate ${event.completed ? 'text-slate-500' : 'text-slate-700'}` }, event.text)
                                             )
                                         )),
-                                        totalItems > itemsToShow && React.createElement("p", { className: "text-xs text-center text-slate-500 mt-1" }, `+${totalItems - itemsToShow} more`)
+                                        hiddenItems > 0 && React.createElement("p", { className: "text-xs text-center text-slate-500 mt-1" }, `+${hiddenItems} more`)
                                     ),
                                     studyTimeInMinutes > 0 && (
                                         React.createElement("div", { className: "mt-auto pt-1 flex items-center justify-center text-xs font-bold" },
